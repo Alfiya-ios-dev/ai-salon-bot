@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: salon_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: salon_db
+      POSTGRES_USER: salon_user
+      POSTGRES_PASSWORD: salon_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - salon_pg_data:/var/lib/postgresql/data
+
+volumes:
+  salon_pg_data:
