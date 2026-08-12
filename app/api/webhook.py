@@ -10,6 +10,7 @@ from app.config import settings
 from app.database import AsyncSessionLocal, get_db
 from app.models import Dialog, DialogStatus, Message, SenderType
 from app.schemas import WebhookAck, WebhookRequest
+from app.services import pipeline
 
 router = APIRouter()
 
@@ -56,14 +57,18 @@ async def _flush_after_silence(client_external_id: str) -> None:
     print(f"============================\n", flush=True)
 
     async with AsyncSessionLocal() as db:
-        db.add(
-            Message(
-                message_id=f"bot-{uuid.uuid4()}",
-                dialog_id=buffer["dialog_id"],
-                sender_type=SenderType.bot,
-                text=f"Эхо: {combined_text}",
-            )
+        reply_text = await pipeline.handle_message(
+            db, dialog_id=buffer["dialog_id"], combined_text=combined_text
         )
+        if reply_text is not None:
+            db.add(
+                Message(
+                    message_id=f"bot-{uuid.uuid4()}",
+                    dialog_id=buffer["dialog_id"],
+                    sender_type=SenderType.bot,
+                    text=reply_text,
+                )
+            )
         await db.commit()
 
 

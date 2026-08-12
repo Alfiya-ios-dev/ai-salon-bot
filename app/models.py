@@ -1,7 +1,7 @@
 import enum
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Date, DateTime, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -84,11 +84,48 @@ class Message(Base):
     dialog: Mapped["Dialog"] = relationship(back_populates="messages")
 
 
+class Service(Base):
+    __tablename__ = "services"
+
+    service_id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True)
+    duration_minutes: Mapped[int]
+
+
+class Master(Base):
+    __tablename__ = "masters"
+
+    master_id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True)
+    services: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    schedule: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    bookings: Mapped[list["Booking"]] = relationship(back_populates="master")
+    schedule_exceptions: Mapped[list["MasterScheduleException"]] = relationship(
+        back_populates="master"
+    )
+
+
+class MasterScheduleException(Base):
+    __tablename__ = "master_schedule_exceptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    master_id: Mapped[int] = mapped_column(ForeignKey("masters.master_id"))
+    date: Mapped[date] = mapped_column(Date)
+    reason: Mapped[str | None] = mapped_column(String(255))
+
+    master: Mapped["Master"] = relationship(back_populates="schedule_exceptions")
+
+
 class Booking(Base):
     __tablename__ = "bookings"
+    __table_args__ = (
+        UniqueConstraint("master_id", "booking_datetime", name="uq_master_booking_time"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     dialog_id: Mapped[int] = mapped_column(ForeignKey("dialogs.dialog_id"))
+    master_id: Mapped[int] = mapped_column(ForeignKey("masters.master_id"))
     client_name: Mapped[str] = mapped_column(String(255))
     client_phone: Mapped[str] = mapped_column(String(50))
     service: Mapped[str] = mapped_column(String(255))
@@ -97,6 +134,7 @@ class Booking(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     dialog: Mapped["Dialog"] = relationship(back_populates="bookings")
+    master: Mapped["Master"] = relationship(back_populates="bookings")
 
 
 class DialogSummary(Base):

@@ -6,3 +6,5 @@ asyncpg
 pydantic
 pydantic-settings
 python-dotenv
+anthropic
+google-genai
