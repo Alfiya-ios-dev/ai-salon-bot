@@ -1,11 +1,12 @@
 import enum
-from datetime import date, datetime
+from datetime import date, datetime, time
 
-from sqlalchemy import Date, DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, ForeignKey, String, Text, Time as TimeType, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.database import Base
+from app.text_utils import sanitize_text
 
 
 class DialogStatus(str, enum.Enum):
@@ -83,58 +84,116 @@ class Message(Base):
 
     dialog: Mapped["Dialog"] = relationship(back_populates="messages")
 
+    @validates("text")
+    def _validate_text(self, key: str, value: str) -> str:
+        # Last-resort safety net: sanitizes on every assignment (constructor
+        # kwarg or attribute set), so no caller can bypass it — see
+        # app/text_utils.py for why this is needed.
+        return sanitize_text(value)
+
 
 class Service(Base):
+    """A bookable service offered by the salon. Deliberately generic
+    (category/price/description alongside name/duration) so a future admin
+    panel can manage the price list without any schema changes."""
+
     __tablename__ = "services"
 
-    service_id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    category: Mapped[str | None] = mapped_column(String(100))
     name: Mapped[str] = mapped_column(String(255), unique=True)
+    price: Mapped[int] = mapped_column()
     duration_minutes: Mapped[int]
+    description: Mapped[str | None] = mapped_column(Text)
+
+    staff_links: Mapped[list["StaffService"]] = relationship(back_populates="service")
+    bookings: Mapped[list["Booking"]] = relationship(back_populates="service")
 
 
-class Master(Base):
-    __tablename__ = "masters"
+class Staff(Base):
+    """A staff member (nail master, lash/brow master, or any future role —
+    hence the generic `role` string rather than an enum, and `is_active`
+    so a future admin panel can retire someone without deleting history)."""
 
-    master_id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), unique=True)
-    services: Mapped[list[str]] = mapped_column(JSONB, default=list)
-    schedule: Mapped[dict] = mapped_column(JSONB, default=dict)
-
-    bookings: Mapped[list["Booking"]] = relationship(back_populates="master")
-    schedule_exceptions: Mapped[list["MasterScheduleException"]] = relationship(
-        back_populates="master"
-    )
-
-
-class MasterScheduleException(Base):
-    __tablename__ = "master_schedule_exceptions"
+    __tablename__ = "staff"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    master_id: Mapped[int] = mapped_column(ForeignKey("masters.master_id"))
-    date: Mapped[date] = mapped_column(Date)
-    reason: Mapped[str | None] = mapped_column(String(255))
+    name: Mapped[str] = mapped_column(String(255), unique=True)
+    role: Mapped[str] = mapped_column(String(100))
+    is_active: Mapped[bool] = mapped_column(default=True)
 
-    master: Mapped["Master"] = relationship(back_populates="schedule_exceptions")
+    service_links: Mapped[list["StaffService"]] = relationship(back_populates="staff")
+    schedule_days: Mapped[list["StaffSchedule"]] = relationship(back_populates="staff")
+    bookings: Mapped[list["Booking"]] = relationship(back_populates="staff")
+
+
+class StaffService(Base):
+    """Many-to-many: which services a given staff member can perform."""
+
+    __tablename__ = "staff_services"
+    __table_args__ = (UniqueConstraint("staff_id", "service_id", name="uq_staff_service"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"))
+
+    staff: Mapped["Staff"] = relationship(back_populates="service_links")
+    service: Mapped["Service"] = relationship(back_populates="staff_links")
+
+
+class StaffSchedule(Base):
+    """A staff member's working hours on one specific calendar date.
+
+    Explicit per-date rows (rather than a repeating weekly template plus a
+    separate exceptions table) so a future admin panel can edit any single
+    day directly — a day simply having no row here means that staff member
+    is off that day, with no separate "exception" concept needed.
+    """
+
+    __tablename__ = "staff_schedule"
+    __table_args__ = (UniqueConstraint("staff_id", "date", name="uq_staff_schedule_date"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
+    date: Mapped[date] = mapped_column(Date)
+    start_time: Mapped[time] = mapped_column(TimeType)
+    end_time: Mapped[time] = mapped_column(TimeType)
+
+    staff: Mapped["Staff"] = relationship(back_populates="schedule_days")
+
+
+class BusinessInfo(Base):
+    """Generic key/value store for salon-level facts (address, working
+    hours, cancellation policy, ...) editable from a future admin panel
+    without any schema changes."""
+
+    __tablename__ = "business_info"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
 
 
 class Booking(Base):
     __tablename__ = "bookings"
     __table_args__ = (
-        UniqueConstraint("master_id", "booking_datetime", name="uq_master_booking_time"),
+        UniqueConstraint("staff_id", "booking_datetime", name="uq_staff_booking_time"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    dialog_id: Mapped[int] = mapped_column(ForeignKey("dialogs.dialog_id"))
-    master_id: Mapped[int] = mapped_column(ForeignKey("masters.master_id"))
+    # Nullable: a future admin panel may create walk-in bookings with no
+    # chat dialog behind them. All current (bot) booking paths still set it.
+    dialog_id: Mapped[int | None] = mapped_column(ForeignKey("dialogs.dialog_id"))
+    staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"))
     client_name: Mapped[str] = mapped_column(String(255))
     client_phone: Mapped[str] = mapped_column(String(50))
-    service: Mapped[str] = mapped_column(String(255))
     booking_datetime: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     status: Mapped[BookingStatus] = mapped_column(default=BookingStatus.novaya)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    dialog: Mapped["Dialog"] = relationship(back_populates="bookings")
-    master: Mapped["Master"] = relationship(back_populates="bookings")
+    dialog: Mapped["Dialog | None"] = relationship(back_populates="bookings")
+    staff: Mapped["Staff"] = relationship(back_populates="bookings")
+    service: Mapped["Service"] = relationship(back_populates="bookings")
 
 
 class DialogSummary(Base):

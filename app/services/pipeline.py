@@ -4,6 +4,7 @@ from app.models import Dialog, DialogStatus
 from app.services.gemini_service import gemini_service
 from app.services.guardrail_service import guardrail_service
 from app.services.main_ai_service import main_ai_service
+from app.text_utils import sanitize_text
 
 STOP_BOT_REPLY = (
     "Приносим извинения за доставленные неудобства! Я передал(а) ваше обращение "
@@ -32,9 +33,16 @@ async def handle_message(db: AsyncSession, dialog_id: int, combined_text: str) -
     """
     print(f"[PIPELINE] Starting pipeline for dialog_id={dialog_id}", flush=True)
 
-    guardrail = await guardrail_service.check(combined_text)
+    combined_text = sanitize_text(combined_text)
 
     dialog = await db.get(Dialog, dialog_id)
+
+    # Passing the dialog's current language lets the guardrail keep it
+    # ("sticky") for short/ambiguous messages (a lone name, phone number,
+    # etc.) that carry no real linguistic signal on their own — otherwise
+    # a Kyrgyz-sounding name alone can flip the whole dialog to Gemini.
+    guardrail = await guardrail_service.check(combined_text, current_language=dialog.language)
+    dialog.language = guardrail.detected_language
 
     if guardrail.is_stop_bot:
         dialog.status = DialogStatus.escalated
@@ -47,6 +55,17 @@ async def handle_message(db: AsyncSession, dialog_id: int, combined_text: str) -
         dialog.status = DialogStatus.escalated
         dialog.escalation_reason = guardrail.reason or "hot_lead"
         print(f"[PIPELINE] Dialog {dialog_id} escalated (hot_lead): {dialog.escalation_reason}", flush=True)
+
+        # Main AI can actually search slots and create the booking via
+        # function calling, so let it try instead of just acknowledging.
+        # Gemini has no booking tools yet, so ky hot leads still get the
+        # static acknowledgment below.
+        if guardrail.detected_language == "ru":
+            print(f"[PIPELINE] Hot lead routed to Main AI (ru) to attempt booking", flush=True)
+            reply_text = await main_ai_service.generate_reply(db, dialog_id, combined_text)
+            print(f"[PIPELINE] Reply: {reply_text}", flush=True)
+            return reply_text
+
         print(f"[PIPELINE] Reply: {HOT_LEAD_REPLY}", flush=True)
         return HOT_LEAD_REPLY
 
@@ -58,7 +77,7 @@ async def handle_message(db: AsyncSession, dialog_id: int, combined_text: str) -
 
     if guardrail.detected_language == "ky":
         print(f"[PIPELINE] Routing dialog {dialog_id} to Gemini (ky)", flush=True)
-        gemini_result = await gemini_service.generate_reply(combined_text)
+        gemini_result = await gemini_service.generate_reply(db, combined_text)
         if gemini_result.is_stop_bot:
             dialog.status = DialogStatus.escalated
             dialog.escalation_reason = gemini_result.stop_reason or "gemini_flagged_topic"
@@ -72,6 +91,6 @@ async def handle_message(db: AsyncSession, dialog_id: int, combined_text: str) -
         return gemini_result.text
 
     print(f"[PIPELINE] Routing dialog {dialog_id} to Main AI (ru)", flush=True)
-    reply_text = await main_ai_service.generate_reply(combined_text)
+    reply_text = await main_ai_service.generate_reply(db, dialog_id, combined_text)
     print(f"[PIPELINE] Reply: {reply_text}", flush=True)
     return reply_text

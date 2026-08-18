@@ -22,6 +22,21 @@ SYSTEM_PROMPT = """\
 не планирует продолжать диалог.
 - detected_language: 'ru' или 'ky' — определи, на каком из этих двух языков \
 написано сообщение.
+  ВАЖНО: определяй язык по СТРУКТУРЕ предложения и служебным/обычным \
+  словам (предлоги, окончания, грамматика), а НЕ по именам собственным. \
+  Кыргызские имена (Гульнара, Айгуль, Нурлан и т.п.) сами по себе не делают \
+  предложение кыргызским — они естественно встречаются и в русской речи. \
+  Если предложение построено по русской грамматике и состоит из русских \
+  слов (даже если в нём упомянуто кыргызское имя мастера или клиента) — \
+  язык СТРОГО 'ru'. Выбирай 'ky', только если само предложение целиком или \
+  большей частью написано кыргызскими словами.
+  ОСОБЫЙ СЛУЧАЙ — короткие сообщения без языковой структуры: если \
+  сообщение состоит всего из одного слова/имени (например, просто "Алия" \
+  или "Кундуз"), номера телефона, числа или другого обрывка без предлогов/\
+  окончаний/грамматики, по которым вообще можно было бы судить о языке — \
+  НЕ угадывай язык по звучанию имени. В этом случае верни detected_language \
+  равным ТЕКУЩЕМУ ЯЗЫКУ ДИАЛОГА, который указан ниже, а не переключай язык \
+  диалога только из-за одного имени или числа.
 
 Пример формата JSON-ответа:
 {"is_stop_bot": false, "reason": null, "is_hot_lead": false, "is_refusal": false, "detected_language": "ru"}
@@ -65,15 +80,16 @@ class GuardrailService:
             base_url="https://openrouter.ai/api/v1",
         )
 
-    async def check(self, combined_text: str) -> GuardrailResult:
+    async def check(self, combined_text: str, current_language: str = "ru") -> GuardrailResult:
         print(f"[GUARDRAIL] Calling model={settings.GUARDRAIL_MODEL}...", flush=True)
+        system_prompt = f"{SYSTEM_PROMPT}\n\nТекущий язык этого диалога: '{current_language}'."
         try:
             response = await self._client.chat.completions.create(
                 model=settings.GUARDRAIL_MODEL,
                 max_tokens=512,
                 response_format={"type": "json_object"},
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": combined_text},
                 ],
             )

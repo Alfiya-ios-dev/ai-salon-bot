@@ -25,7 +25,7 @@ async def create_service(payload: ServiceCreate, db: AsyncSession = Depends(get_
 
 @router.get("", response_model=list[ServiceResponse])
 async def list_services(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Service).order_by(Service.service_id))
+    result = await db.execute(select(Service).order_by(Service.id))
     return result.scalars().all()
 
 
