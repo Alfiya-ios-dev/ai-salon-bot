@@ -1,6 +1,5 @@
-import traceback
-
 from google.genai import types
+from google.genai import errors as genai_errors
 from pydantic import BaseModel
 
 from app.config import settings
@@ -40,9 +39,11 @@ class GeminiService:
                 config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
             )
             text = response.text or ""
-        except Exception:
-            print("[GEMINI] ERROR calling Gemini API — returning fallback reply:", flush=True)
-            traceback.print_exc()
+        except genai_errors.APIError as exc:
+            print(f"[GEMINI] API Error: {exc}", flush=True)
+            return GeminiResult(text=FALLBACK_RESULT_TEXT)
+        except Exception as exc:
+            print(f"[GEMINI] Unexpected error: {exc}", flush=True)
             return GeminiResult(text=FALLBACK_RESULT_TEXT)
 
         if STOP_MARKER in text:

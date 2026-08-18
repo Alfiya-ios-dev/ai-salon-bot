@@ -1,14 +1,15 @@
-import traceback
 from typing import Literal
 
-from anthropic import AsyncAnthropic
-from pydantic import BaseModel
+import openai
+from openai import AsyncOpenAI
+from pydantic import BaseModel, ValidationError
 
 from app.config import settings
 
 SYSTEM_PROMPT = """\
 Ты — предохранитель (guardrail) для бота салона красоты. Проанализируй \
-сообщение клиента и верни JSON со следующими полями:
+сообщение клиента и верни ТОЛЬКО валидный JSON-объект (без markdown, без \
+пояснений, без текста до или после) со следующими полями:
 
 - is_stop_bot: true, если клиент просит позвать человека/менеджера, явно \
 жалуется, агрессивен, либо пишет что-то, требующее немедленного вмешательства \
@@ -21,6 +22,9 @@ SYSTEM_PROMPT = """\
 не планирует продолжать диалог.
 - detected_language: 'ru' или 'ky' — определи, на каком из этих двух языков \
 написано сообщение.
+
+Пример формата JSON-ответа:
+{"is_stop_bot": false, "reason": null, "is_hot_lead": false, "is_refusal": false, "detected_language": "ru"}
 """
 
 
@@ -43,26 +47,46 @@ _FALLBACK_RESULT = GuardrailResult(
 )
 
 
+def _strip_markdown_fence(text: str) -> str:
+    # Claude via OpenRouter often wraps JSON in a ```json ... ``` fence even
+    # when instructed not to and with response_format=json_object set.
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    return text
+
+
 class GuardrailService:
     """Cheap/fast classifier that runs before any reply-generating model."""
 
     def __init__(self) -> None:
-        self._client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY or None)
+        self._client = AsyncOpenAI(
+            api_key=settings.OPENROUTER_API_KEY or None,
+            base_url="https://openrouter.ai/api/v1",
+        )
 
     async def check(self, combined_text: str) -> GuardrailResult:
         print(f"[GUARDRAIL] Calling model={settings.GUARDRAIL_MODEL}...", flush=True)
         try:
-            response = await self._client.messages.parse(
+            response = await self._client.chat.completions.create(
                 model=settings.GUARDRAIL_MODEL,
                 max_tokens=512,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": combined_text}],
-                output_format=GuardrailResult,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": combined_text},
+                ],
             )
-            result = response.parsed_output
-        except Exception:
-            print("[GUARDRAIL] ERROR calling Anthropic API — falling back to safe defaults:", flush=True)
-            traceback.print_exc()
+            raw_content = _strip_markdown_fence(response.choices[0].message.content)
+            result = GuardrailResult.model_validate_json(raw_content)
+        except openai.APIError as exc:
+            print(f"[GUARDRAIL] API Error: {exc}", flush=True)
+            return _FALLBACK_RESULT
+        except (ValidationError, ValueError) as exc:
+            print(f"[GUARDRAIL] Malformed model output: {exc}", flush=True)
+            return _FALLBACK_RESULT
+        except Exception as exc:
+            print(f"[GUARDRAIL] Unexpected error: {exc}", flush=True)
             return _FALLBACK_RESULT
 
         print(
