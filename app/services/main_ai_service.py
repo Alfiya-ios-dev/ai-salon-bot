@@ -12,14 +12,15 @@ from app.config import settings
 from app.models import Message, SenderType, Staff
 from app.services import booking_service
 from app.services.knowledge_service import get_knowledge_context
+from app.services.sales_prompt_service import get_or_create_sales_prompt
 
-BASE_SYSTEM_PROMPT = (
-    "Ты — заботливый и приветливый администратор салона красоты, общаешься с "
-    "клиентами на русском языке. Пиши тепло и живо, как человек, а не как "
-    "робот: уместны разговорные фразы вроде 'С удовольствием подберу "
-    "окошко!', 'Отлично!', 'Будем ждать вас!' и сдержанные эмодзи (😊, ✨) — "
-    "но не в каждом сообщении и без перебора. Избегай канцеляризмов и "
-    "сухого официального тона. При этом отвечай по делу, без лишней воды.\n\n"
+# Everything below is fixed, non-DB-editable operational scaffolding: tool
+# usage rules and anti-hallucination guards that the AI's function-calling
+# reliability depends on. The admin-editable persona/upsell/objection text
+# (SalesPrompt, see sales_prompt_service.py) is prepended in generate_reply()
+# — deliberately kept separate so an admin editing "how the bot sells" can
+# never accidentally break "how the bot books".
+TOOL_INSTRUCTIONS = (
     "Для работы с записью используй инструменты:\n"
     "- find_available_slots — чтобы посмотреть свободное время перед тем, как "
     "предлагать клиенту конкретный слот. Не придумывай время сам.\n"
@@ -492,13 +493,24 @@ class MainAIService:
 
         today = date.today()
         knowledge_context = await get_knowledge_context(db)
+        sales_prompt = await get_or_create_sales_prompt(db)
         history = await self._load_history(db, dialog_id)
         if not history:
             # Defensive fallback in case a caller didn't save the current
             # message before calling here — see _load_history's docstring.
             history = [{"role": "user", "content": combined_text}]
 
-        system_prompt = f"{BASE_SYSTEM_PROMPT}\n\nСегодня {today.isoformat()} ({today.strftime('%A')})."
+        system_prompt = f"{sales_prompt.system_prompt}\n\n{TOOL_INSTRUCTIONS}"
+        if sales_prompt.upsell_scripts.strip():
+            system_prompt += (
+                f"\n\nСКРИПТЫ ДОПРОДАЖ (используй уместно и ненавязчиво, "
+                f"не в ущерб основному запросу клиента):\n{sales_prompt.upsell_scripts}"
+            )
+        if sales_prompt.objection_handling.strip():
+            system_prompt += (
+                f"\n\nОТРАБОТКА ВОЗРАЖЕНИЙ:\n{sales_prompt.objection_handling}"
+            )
+        system_prompt += f"\n\nСегодня {today.isoformat()} ({today.strftime('%A')})."
         if len(history) <= 1:
             system_prompt += FIRST_MESSAGE_INSTRUCTION
         system_prompt += knowledge_context

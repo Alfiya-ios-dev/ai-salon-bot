@@ -235,3 +235,26 @@ class RagDocument(Base):
     title: Mapped[str] = mapped_column(String(255))
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SalesPrompt(Base):
+    """Admin-editable sales persona/scripts for Main AI, loaded live on every
+    reply instead of baked into a static file. Treated as a singleton table
+    (callers always take/create the lowest-id row) — there's exactly one
+    "current" set of scripts, not a history of versions.
+
+    Deliberately does NOT include the tool-usage/anti-hallucination rules
+    that make function calling work reliably (see main_ai_service.py's
+    TOOL_INSTRUCTIONS) — those stay fixed in code so an admin edit here
+    can't accidentally break booking.
+    """
+
+    __tablename__ = "sales_prompts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    system_prompt: Mapped[str] = mapped_column(Text)
+    upsell_scripts: Mapped[str] = mapped_column(Text, default="")
+    objection_handling: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

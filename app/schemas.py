@@ -1,6 +1,6 @@
 from datetime import date, datetime, time
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models import BookingStatus
 
@@ -115,6 +115,22 @@ class BusinessInfoResponse(BaseModel):
 
     key: str
     value: str
+
+
+class SalesPromptUpdate(BaseModel):
+    system_prompt: str = Field(min_length=1)
+    upsell_scripts: str = ""
+    objection_handling: str = ""
+
+
+class SalesPromptResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    system_prompt: str
+    upsell_scripts: str
+    objection_handling: str
+    updated_at: datetime
 
 
 class AvailableSlotsResponse(BaseModel):
