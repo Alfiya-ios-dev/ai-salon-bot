@@ -1,8 +1,27 @@
 from datetime import date, datetime, time
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.models import BookingStatus
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8)
+    business_name: str = Field(min_length=1)
+    business_phone_number: str = Field(min_length=5, max_length=50)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    tenant_id: int
+    business_name: str
 
 
 class IncomingMessage(BaseModel):
@@ -12,6 +31,10 @@ class IncomingMessage(BaseModel):
 
 
 class WebhookRequest(BaseModel):
+    # Which business's WhatsApp number the client messaged — webhook.py uses
+    # this (not a raw tenant_id) to look up the tenant in the registry and
+    # route to that tenant's own database.
+    business_phone_number: str
     event_type: str
     channel: str
     client_external_id: str
@@ -104,6 +127,11 @@ class StaffScheduleResponse(BaseModel):
     date: date
     start_time: time
     end_time: time
+
+
+class BusinessInfoCreate(BaseModel):
+    key: str = Field(min_length=1, max_length=100)
+    value: str
 
 
 class BusinessInfoUpsert(BaseModel):

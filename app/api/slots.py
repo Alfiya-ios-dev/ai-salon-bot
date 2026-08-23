@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.auth_dependencies import get_current_tenant_db
 from app.models import Service, Staff, StaffService
 from app.schemas import AvailableSlotsResponse
 from app.services.booking_service import compute_free_slots
@@ -17,7 +17,7 @@ async def get_available_slots(
     service_id: int = Query(...),
     date: date_ = Query(...),
     staff_id: int | None = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_current_tenant_db),
 ):
     service = await db.get(Service, service_id)
     if service is None:

@@ -5,7 +5,7 @@ from sqlalchemy import Date, DateTime, ForeignKey, String, Text, Time as TimeTyp
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
-from app.database import Base
+from app.tenant_db import TenantBase as Base
 from app.text_utils import sanitize_text
 
 
@@ -36,6 +36,13 @@ class PromiseSource(str, enum.Enum):
     manual = "manual"
 
 
+# NOTE: no Tenant model here. Under database-per-tenant, this database IS
+# one specific tenant's — there's exactly one business per physical
+# database, so there's nothing to key rows by. The registry of businesses
+# (and which database each one's data lives in) is app/registry_models.py,
+# a separate model in the separate tenant_registry_db database.
+
+
 class Manager(Base):
     __tablename__ = "managers"
 
@@ -52,7 +59,7 @@ class Dialog(Base):
     __tablename__ = "dialogs"
 
     dialog_id: Mapped[int] = mapped_column(primary_key=True)
-    client_external_id: Mapped[str] = mapped_column(String(255), index=True)
+    client_external_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     channel: Mapped[str] = mapped_column(String(50))
     language: Mapped[str] = mapped_column(String(10))
     status: Mapped[DialogStatus] = mapped_column(default=DialogStatus.bot_active)
@@ -93,9 +100,10 @@ class Message(Base):
 
 
 class Service(Base):
-    """A bookable service offered by the salon. Deliberately generic
-    (category/price/description alongside name/duration) so a future admin
-    panel can manage the price list without any schema changes."""
+    """A bookable service offered by this tenant's business. Deliberately
+    generic (category/price/description alongside name/duration) so a
+    future admin panel can manage the price list without any schema
+    changes."""
 
     __tablename__ = "services"
 
@@ -241,7 +249,8 @@ class SalesPrompt(Base):
     """Admin-editable sales persona/scripts for Main AI, loaded live on every
     reply instead of baked into a static file. Treated as a singleton table
     (callers always take/create the lowest-id row) — there's exactly one
-    "current" set of scripts, not a history of versions.
+    "current" set of scripts, since this database belongs to exactly one
+    business.
 
     Deliberately does NOT include the tool-usage/anti-hallucination rules
     that make function calling work reliably (see main_ai_service.py's

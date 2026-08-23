@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.auth_dependencies import get_current_tenant_db
 from app.models import Service
 from app.schemas import ServiceCreate, ServiceResponse
 
@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 @router.post("", response_model=ServiceResponse, status_code=201)
-async def create_service(payload: ServiceCreate, db: AsyncSession = Depends(get_db)):
+async def create_service(payload: ServiceCreate, db: AsyncSession = Depends(get_current_tenant_db)):
     service = Service(**payload.model_dump())
     db.add(service)
     try:
@@ -24,13 +24,13 @@ async def create_service(payload: ServiceCreate, db: AsyncSession = Depends(get_
 
 
 @router.get("", response_model=list[ServiceResponse])
-async def list_services(db: AsyncSession = Depends(get_db)):
+async def list_services(db: AsyncSession = Depends(get_current_tenant_db)):
     result = await db.execute(select(Service).order_by(Service.id))
     return result.scalars().all()
 
 
 @router.delete("/{service_id}", status_code=204)
-async def delete_service(service_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_service(service_id: int, db: AsyncSession = Depends(get_current_tenant_db)):
     service = await db.get(Service, service_id)
     if service is None:
         raise HTTPException(status_code=404, detail="Service not found")

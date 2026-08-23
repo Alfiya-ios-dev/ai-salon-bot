@@ -1,14 +1,10 @@
-"""One-time data load for the Maratova Beauty Studio pilot.
+"""Data load for the Maratova Beauty Studio pilot tenant.
 
-This project has no migration tool (Alembic) yet, and `Base.metadata.create_all()`
-only creates tables that don't exist — it can't add/rename columns on ones
-that already do. `services` and `bookings` changed shape (normalized FKs,
-new columns) and `masters`/`master_schedule_exceptions` are gone entirely
-(replaced by `staff`/`staff_schedule`), so those four tables are dropped and
-recreated here. Everything in them so far was test data from development
-(fake masters/services, zero real bookings) — nothing of business value is
-lost. `dialogs`/`messages`/`rag_documents` keep their schema; old test rows
-in them are just cleared, not dropped.
+Idempotent: get-or-creates the "Maratova Beauty Studio" Tenant row in the
+registry (registering it — including provisioning its own physical database
+— if it doesn't exist yet), then seeds business info / staff / services /
+schedule *inside that tenant's own database*, skipping anything that already
+exists there. Safe to re-run.
 
 Usage:
     python scripts/seed_maratova_beauty.py
@@ -21,19 +17,26 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import text  # noqa: E402
+from sqlalchemy import select  # noqa: E402
 
 from app.database import AsyncSessionLocal, Base, engine  # noqa: E402
+from app import registry_models  # noqa: E402,F401  (registers Tenant on Base.metadata)
 from app.models import (  # noqa: E402
     BusinessInfo,
-    Dialog,
-    Message,
-    RagDocument,
     Service,
     Staff,
     StaffSchedule,
     StaffService,
 )
+from app.registry_models import Tenant  # noqa: E402
+from app.services.auth_service import hash_password  # noqa: E402
+from app.tenant_db import get_tenant_sessionmaker, provision_tenant_database  # noqa: E402
+
+TENANT_NAME = "Maratova Beauty Studio"
+# Local/dev seed credentials only — not meant for a real production signup.
+TENANT_EMAIL = "owner@maratovabeauty.example.com"
+TENANT_PASSWORD = "change-me-12345"
+TENANT_PHONE = "+996700000001"
 
 SCHEDULE_DAYS_AHEAD = 30
 WORK_START = time(9, 0)
@@ -105,75 +108,104 @@ SERVICE_GROUPS = [
 ]
 
 
-async def _drop_incompatible_tables() -> None:
-    """Old masters/services/bookings/master_schedule_exceptions tables have
-    either gone away or changed columns; create_all() can't alter existing
-    tables, so they're dropped and recreated fresh below."""
-    async with engine.begin() as conn:
-        for table in ("bookings", "master_schedule_exceptions", "masters", "services"):
-            await conn.execute(text(f'DROP TABLE IF EXISTS "{table}" CASCADE'))
+async def _get_or_create_tenant() -> Tenant:
+    async with AsyncSessionLocal() as db:
+        tenant = await db.scalar(select(Tenant).where(Tenant.business_name == TENANT_NAME))
+        if tenant is not None:
+            return tenant
 
-
-async def _clear_test_rows(db) -> None:
-    """dialogs/messages/rag_documents keep their schema — just clear out
-    development test rows for a clean slate on the real pilot client."""
-    for model in (Message, Dialog, RagDocument):
-        await db.execute(model.__table__.delete())
-    await db.commit()
+        tenant = Tenant(
+            business_name=TENANT_NAME,
+            email=TENANT_EMAIL,
+            password_hash=hash_password(TENANT_PASSWORD),
+            business_phone_number=TENANT_PHONE,
+            database_name="pending",
+        )
+        db.add(tenant)
+        await db.flush()
+        tenant.database_name = f"tenant_{tenant.id}_db"
+        await provision_tenant_database(tenant.database_name)
+        await db.commit()
+        await db.refresh(tenant)
+        return tenant
 
 
 async def seed() -> None:
-    await _drop_incompatible_tables()
-
+    # Registry schema must exist before we can look up/insert the tenant row.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    async with AsyncSessionLocal() as db:
-        await _clear_test_rows(db)
+    tenant = await _get_or_create_tenant()
+    sessionmaker = get_tenant_sessionmaker(tenant.database_name)
 
+    async with sessionmaker() as db:
         for key, value in BUSINESS_INFO.items():
-            db.add(BusinessInfo(key=key, value=value))
+            existing = await db.get(BusinessInfo, key)
+            if existing is None:
+                db.add(BusinessInfo(key=key, value=value))
 
         staff_by_name: dict[str, Staff] = {}
         for staff_data in STAFF:
-            staff = Staff(**staff_data)
-            db.add(staff)
-            staff_by_name[staff_data["name"]] = staff
+            existing = await db.scalar(select(Staff).where(Staff.name == staff_data["name"]))
+            if existing is None:
+                existing = Staff(**staff_data)
+                db.add(existing)
+                await db.flush()
+            staff_by_name[staff_data["name"]] = existing
 
         await db.commit()
 
         service_count = 0
         for category, services, staff_names in SERVICE_GROUPS:
             for name, price, duration_minutes in services:
-                service = Service(
-                    category=category, name=name, price=price, duration_minutes=duration_minutes
-                )
-                db.add(service)
-                await db.flush()  # need service.id for the StaffService links below
+                service = await db.scalar(select(Service).where(Service.name == name))
+                if service is None:
+                    service = Service(
+                        category=category,
+                        name=name,
+                        price=price,
+                        duration_minutes=duration_minutes,
+                    )
+                    db.add(service)
+                    await db.flush()  # need service.id for the StaffService links below
                 service_count += 1
 
                 for staff_name in staff_names:
-                    db.add(StaffService(staff_id=staff_by_name[staff_name].id, service_id=service.id))
+                    staff = staff_by_name[staff_name]
+                    link = await db.scalar(
+                        select(StaffService).where(
+                            StaffService.staff_id == staff.id, StaffService.service_id == service.id
+                        )
+                    )
+                    if link is None:
+                        db.add(StaffService(staff_id=staff.id, service_id=service.id))
 
         await db.commit()
 
         schedule_count = 0
         for staff in staff_by_name.values():
             for day_offset in range(SCHEDULE_DAYS_AHEAD):
-                db.add(
-                    StaffSchedule(
-                        staff_id=staff.id,
-                        date=date.today() + timedelta(days=day_offset),
-                        start_time=WORK_START,
-                        end_time=WORK_END,
+                schedule_date = date.today() + timedelta(days=day_offset)
+                existing = await db.scalar(
+                    select(StaffSchedule).where(
+                        StaffSchedule.staff_id == staff.id, StaffSchedule.date == schedule_date
                     )
                 )
+                if existing is None:
+                    db.add(
+                        StaffSchedule(
+                            staff_id=staff.id,
+                            date=schedule_date,
+                            start_time=WORK_START,
+                            end_time=WORK_END,
+                        )
+                    )
                 schedule_count += 1
 
         await db.commit()
 
     print(
-        "Maratova Beauty Studio seed complete: "
+        f"Maratova Beauty Studio seed complete: tenant_id={tenant.id}, database={tenant.database_name}, "
         f"{len(BUSINESS_INFO)} business info rows, {len(STAFF)} staff, "
         f"{service_count} services, {schedule_count} schedule days."
     )

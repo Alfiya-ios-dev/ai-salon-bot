@@ -4,7 +4,11 @@ sqlalchemy
 greenlet
 asyncpg
 pydantic
+pydantic[email]
 pydantic-settings
 python-dotenv
 openai
 google-genai
+pyjwt
+passlib[bcrypt]
+bcrypt<4.0

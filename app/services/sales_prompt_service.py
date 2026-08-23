@@ -32,10 +32,11 @@ DEFAULT_OBJECTION_HANDLING = (
 
 
 async def get_or_create_sales_prompt(db: AsyncSession) -> SalesPrompt:
-    """Returns the single "current" SalesPrompt row, creating it with the
-    default scripts on first access (this table has no seed script — the
-    lazy default here covers "table is empty" unconditionally, regardless
-    of when/whether a seed script has run)."""
+    """Returns the single "current" SalesPrompt row for this tenant's
+    database, creating it with the default scripts on first access (there's
+    no seed script for this table — the lazy default here covers "row
+    doesn't exist yet" unconditionally, regardless of when/whether this
+    business was freshly onboarded)."""
     prompt = await db.scalar(select(SalesPrompt).order_by(SalesPrompt.id).limit(1))
     if prompt is None:
         prompt = SalesPrompt(
