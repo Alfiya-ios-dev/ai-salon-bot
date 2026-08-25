@@ -28,6 +28,12 @@ class IncomingMessage(BaseModel):
     text: str
     timestamp: datetime
     message_id: str
+    # What kind of message this is, as reported by the channel (WhatsApp via
+    # n8n). "text" is the only type the bot currently understands — anything
+    # else (audio/voice/image/video/document/sticker/...) gets a canned
+    # "can't handle this yet" reply in webhook.py instead of going through
+    # the AI pipeline.
+    message_type: str = "text"
 
 
 class WebhookRequest(BaseModel):
@@ -44,6 +50,10 @@ class WebhookRequest(BaseModel):
 class WebhookAck(BaseModel):
     status: str
     message_id: str
+    # Set only for the immediate, synchronous canned reply to unsupported
+    # media (see webhook.py) — the normal text pipeline's reply is delivered
+    # later, asynchronously, after the debounce window, so this stays None.
+    reply: str | None = None
 
 
 class BookingCreate(BaseModel):
