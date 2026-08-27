@@ -10,6 +10,7 @@ from app.api.services import router as services_router
 from app.api.slots import router as slots_router
 from app.api.staff import router as staff_router
 from app.api.webhook import router as webhook_router
+from app.config import settings
 from app.database import Base, engine
 from app import registry_models  # noqa: F401  (registers Tenant on Base.metadata)
 
@@ -28,7 +29,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Beauty Salon Bot Backend", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

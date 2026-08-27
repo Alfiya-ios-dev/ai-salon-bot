@@ -18,7 +18,17 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
 
+    # Comma-separated list of frontend origins allowed to call the API with
+    # credentials (see CORSMiddleware in app/main.py). Wildcard ("*") isn't
+    # used here because browsers reject credentialed requests against it —
+    # set this to the real admin-panel domain(s) via .env in production.
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
 
 settings = Settings()
