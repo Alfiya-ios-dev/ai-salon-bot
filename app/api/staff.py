@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.auth_dependencies import get_current_tenant_db
 from app.models import Service, Staff, StaffSchedule, StaffService
@@ -14,6 +15,16 @@ from app.schemas import (
 )
 
 router = APIRouter()
+
+
+def _to_staff_response(staff: Staff) -> StaffResponse:
+    return StaffResponse(
+        id=staff.id,
+        name=staff.name,
+        role=staff.role,
+        is_active=staff.is_active,
+        service_ids=[link.service_id for link in staff.service_links],
+    )
 
 
 @router.post("", response_model=StaffResponse, status_code=201)
@@ -31,8 +42,21 @@ async def create_staff(payload: StaffCreate, db: AsyncSession = Depends(get_curr
 
 @router.get("", response_model=list[StaffResponse])
 async def list_staff(db: AsyncSession = Depends(get_current_tenant_db)):
-    result = await db.execute(select(Staff).order_by(Staff.id))
-    return result.scalars().all()
+    result = await db.execute(
+        select(Staff).options(selectinload(Staff.service_links)).order_by(Staff.id)
+    )
+    return [_to_staff_response(staff) for staff in result.scalars().all()]
+
+
+@router.get("/{staff_id}", response_model=StaffResponse)
+async def get_staff(staff_id: int, db: AsyncSession = Depends(get_current_tenant_db)):
+    result = await db.execute(
+        select(Staff).options(selectinload(Staff.service_links)).where(Staff.id == staff_id)
+    )
+    staff = result.scalar_one_or_none()
+    if staff is None:
+        raise HTTPException(status_code=404, detail="Staff not found")
+    return _to_staff_response(staff)
 
 
 @router.patch("/{staff_id}", response_model=StaffResponse)

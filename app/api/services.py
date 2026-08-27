@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth_dependencies import get_current_tenant_db
 from app.models import Service
-from app.schemas import ServiceCreate, ServiceResponse
+from app.schemas import ServiceCreate, ServiceResponse, ServiceUpdate
 
 router = APIRouter()
 
@@ -27,6 +27,26 @@ async def create_service(payload: ServiceCreate, db: AsyncSession = Depends(get_
 async def list_services(db: AsyncSession = Depends(get_current_tenant_db)):
     result = await db.execute(select(Service).order_by(Service.id))
     return result.scalars().all()
+
+
+@router.put("/{service_id}", response_model=ServiceResponse)
+async def update_service(
+    service_id: int, payload: ServiceUpdate, db: AsyncSession = Depends(get_current_tenant_db)
+):
+    service = await db.get(Service, service_id)
+    if service is None:
+        raise HTTPException(status_code=404, detail="Service not found")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(service, field, value)
+
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=f"Service '{payload.name}' already exists")
+    await db.refresh(service)
+    return service
 
 
 @router.delete("/{service_id}", status_code=204)

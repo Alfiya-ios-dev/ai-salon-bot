@@ -91,6 +91,14 @@ class ServiceCreate(BaseModel):
     description: str | None = None
 
 
+class ServiceUpdate(BaseModel):
+    category: str | None = None
+    name: str | None = None
+    price: int | None = None
+    duration_minutes: int | None = None
+    description: str | None = None
+
+
 class ServiceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -121,6 +129,7 @@ class StaffResponse(BaseModel):
     name: str
     role: str
     is_active: bool
+    service_ids: list[int] = []
 
 
 class StaffScheduleCreate(BaseModel):
