@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Dialog, DialogStatus
+from app.services.dialog_summary_service import get_latest_summary_text
 from app.services.gemini_service import gemini_service
 from app.services.guardrail_service import guardrail_service
 from app.services.main_ai_service import main_ai_service
@@ -41,7 +42,10 @@ async def handle_message(db: AsyncSession, dialog_id: int, combined_text: str) -
     # ("sticky") for short/ambiguous messages (a lone name, phone number,
     # etc.) that carry no real linguistic signal on their own — otherwise
     # a Kyrgyz-sounding name alone can flip the whole dialog to Gemini.
-    guardrail = await guardrail_service.check(combined_text, current_language=dialog.language)
+    dialog_summary = await get_latest_summary_text(db, dialog_id)
+    guardrail = await guardrail_service.check(
+        combined_text, current_language=dialog.language, dialog_summary=dialog_summary
+    )
     dialog.language = guardrail.detected_language
 
     if guardrail.is_stop_bot:

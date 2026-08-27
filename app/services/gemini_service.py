@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.services.gemini_client import get_gemini_client
-from app.services.knowledge_service import get_knowledge_context
+from app.services.knowledge_service import get_relevant_knowledge_context
 
 BASE_SYSTEM_PROMPT = (
     "Сен сулуулук салонунун жардамчысысың, кыргыз тилинде жооп бересиң. "
@@ -23,6 +23,10 @@ STOP_MARKER = "[[STOP_BOT:"
 
 FALLBACK_RESULT_TEXT = "Кечиресиз, учурда техникалык көйгөй бар. Жакында байланышабыз."
 
+# Caps the reply model's own output — keeps replies concise and bounds
+# per-call cost regardless of input size.
+GEMINI_MAX_OUTPUT_TOKENS = 400
+
 
 class GeminiResult(BaseModel):
     text: str
@@ -38,13 +42,16 @@ class GeminiService:
     async def generate_reply(self, db: AsyncSession, combined_text: str) -> GeminiResult:
         print(f"[GEMINI] Calling model={settings.GEMINI_MODEL}...", flush=True)
         client = get_gemini_client()
-        knowledge_context = await get_knowledge_context(db)
+        knowledge_context = await get_relevant_knowledge_context(db, combined_text)
         system_prompt = BASE_SYSTEM_PROMPT + knowledge_context
         try:
             response = await client.aio.models.generate_content(
                 model=settings.GEMINI_MODEL,
                 contents=combined_text,
-                config=types.GenerateContentConfig(system_instruction=system_prompt),
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=GEMINI_MAX_OUTPUT_TOKENS,
+                ),
             )
             text = response.text or ""
         except genai_errors.APIError as exc:

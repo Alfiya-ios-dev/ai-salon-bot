@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models import Message, SenderType, Staff
 from app.services import booking_service
-from app.services.knowledge_service import get_knowledge_context
+from app.services.dialog_summary_service import get_latest_summary_text
+from app.services.knowledge_service import get_relevant_knowledge_context
 from app.services.sales_prompt_service import get_or_create_sales_prompt
 
 # Everything below is fixed, non-DB-editable operational scaffolding: tool
@@ -102,10 +103,19 @@ FALLBACK_REPLY = "К сожалению, сервис временно недо�
 
 MAX_TOOL_ROUNDS = 5
 
-# How many past messages (client + bot) to load as conversation history.
-# The salon bot's conversations are short, so a generous cap is cheap and
-# just guards against unbounded context growth in a very long test session.
-MAX_HISTORY_MESSAGES = 30
+# Sliding window: only the most recent messages are sent as raw history —
+# anything older is expected to already be folded into the dialog's summary
+# (see dialog_summary_service.py), which is prepended to the system prompt
+# separately. Capped both by message count and by a rough token budget so a
+# handful of very long messages can't blow past it either.
+MAX_HISTORY_MESSAGES = 6
+_CHARS_PER_TOKEN = 4
+MAX_HISTORY_TOKENS = 2000
+MAX_HISTORY_CHARS = MAX_HISTORY_TOKENS * _CHARS_PER_TOKEN
+
+# Caps the reply model's own output — keeps replies concise and bounds
+# per-call cost regardless of input size.
+MAIN_AI_MAX_OUTPUT_TOKENS = 400
 
 TOOLS = [
     {
@@ -349,7 +359,11 @@ class MainAIService:
         )
 
     async def _load_history(self, db: AsyncSession, dialog_id: int) -> list[dict]:
-        """Loads this dialog's past messages as OpenAI-style chat turns.
+        """Loads this dialog's most recent messages as OpenAI-style chat
+        turns — a sliding window, not the full conversation (see
+        MAX_HISTORY_MESSAGES/MAX_HISTORY_CHARS above; anything older is
+        expected to live in the dialog summary instead, prepended
+        separately in generate_reply()).
 
         Callers (webhook.py, scripts/chat_cli.py) save the client's current
         message to `messages` *before* invoking the pipeline, so the current
@@ -374,6 +388,15 @@ class MainAIService:
                 continue
             if msg.text:
                 history.append({"role": role, "content": msg.text})
+
+        # Belt-and-suspenders char budget on top of the message-count cap:
+        # drop oldest turns first if the last MAX_HISTORY_MESSAGES still add
+        # up to more than MAX_HISTORY_CHARS (a handful of long messages).
+        total_chars = sum(len(turn["content"]) for turn in history)
+        while len(history) > 1 and total_chars > MAX_HISTORY_CHARS:
+            total_chars -= len(history[0]["content"])
+            history.pop(0)
+
         return history
 
     async def _execute_tool(
@@ -492,7 +515,8 @@ class MainAIService:
         print(f"[MAIN_AI] Calling model={settings.MAIN_AI_MODEL}...", flush=True)
 
         today = date.today()
-        knowledge_context = await get_knowledge_context(db)
+        knowledge_context = await get_relevant_knowledge_context(db, combined_text)
+        summary_text = await get_latest_summary_text(db, dialog_id)
         sales_prompt = await get_or_create_sales_prompt(db)
         history = await self._load_history(db, dialog_id)
         if not history:
@@ -501,6 +525,8 @@ class MainAIService:
             history = [{"role": "user", "content": combined_text}]
 
         system_prompt = f"{sales_prompt.system_prompt}\n\n{TOOL_INSTRUCTIONS}"
+        if summary_text:
+            system_prompt += f"\n\nКРАТКАЯ СВОДКА ПРЕДЫДУЩЕГО ДИАЛОГА:\n{summary_text}"
         if sales_prompt.upsell_scripts.strip():
             system_prompt += (
                 f"\n\nСКРИПТЫ ДОПРОДАЖ (используй уместно и ненавязчиво, "
@@ -521,7 +547,7 @@ class MainAIService:
             for _ in range(MAX_TOOL_ROUNDS):
                 response = await self._client.chat.completions.create(
                     model=settings.MAIN_AI_MODEL,
-                    max_tokens=1024,
+                    max_tokens=MAIN_AI_MAX_OUTPUT_TOKENS,
                     tools=TOOLS,
                     messages=messages,
                 )

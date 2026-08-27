@@ -6,14 +6,27 @@ from pydantic import BaseModel, ValidationError
 
 from app.config import settings
 
-SYSTEM_PROMPT = """\
+# Explicit, compact category list for is_stop_bot — passed into the prompt
+# as a short bullet list instead of a longer free-text explanation, and
+# kept as a reusable constant rather than inline prose.
+STOP_BOT_CATEGORIES = [
+    "просьба позвать человека/менеджера",
+    "явная жалоба или агрессия",
+    "иное, требующее немедленного вмешательства человека вместо бота",
+]
+
+_STOP_BOT_CATEGORIES_TEXT = "\n".join(f"  * {category}" for category in STOP_BOT_CATEGORIES)
+
+# Plain string with a placeholder (not an f-string/`.format()` template) —
+# the JSON example below contains literal `{`/`}`, which would collide with
+# either of those.
+_SYSTEM_PROMPT_TEMPLATE = """\
 Ты — предохранитель (guardrail) для бота салона красоты. Проанализируй \
 сообщение клиента и верни ТОЛЬКО валидный JSON-объект (без markdown, без \
 пояснений, без текста до или после) со следующими полями:
 
-- is_stop_bot: true, если клиент просит позвать человека/менеджера, явно \
-жалуется, агрессивен, либо пишет что-то, требующее немедленного вмешательства \
-человека вместо бота.
+- is_stop_bot: true, если сообщение попадает в одну из категорий:
+__STOP_BOT_CATEGORIES__
 - reason: краткая причина на русском, если is_stop_bot или is_hot_lead — \
 иначе null.
 - is_hot_lead: true, если клиент явно готов записаться или купить прямо \
@@ -41,6 +54,8 @@ SYSTEM_PROMPT = """\
 Пример формата JSON-ответа:
 {"is_stop_bot": false, "reason": null, "is_hot_lead": false, "is_refusal": false, "detected_language": "ru"}
 """
+
+SYSTEM_PROMPT = _SYSTEM_PROMPT_TEMPLATE.replace("__STOP_BOT_CATEGORIES__", _STOP_BOT_CATEGORIES_TEXT)
 
 
 class GuardrailResult(BaseModel):
@@ -80,9 +95,21 @@ class GuardrailService:
             base_url="https://openrouter.ai/api/v1",
         )
 
-    async def check(self, combined_text: str, current_language: str = "ru") -> GuardrailResult:
+    async def check(
+        self, combined_text: str, current_language: str = "ru", dialog_summary: str = ""
+    ) -> GuardrailResult:
+        """Classifies only the messages accumulated since the last debounce
+        flush (combined_text) plus, if one exists, the dialog's running
+        summary — never the full message history, RAG knowledge base, or
+        tool descriptions, none of which this classifier needs.
+        """
         print(f"[GUARDRAIL] Calling model={settings.GUARDRAIL_MODEL}...", flush=True)
         system_prompt = f"{SYSTEM_PROMPT}\n\nТекущий язык этого диалога: '{current_language}'."
+
+        user_content = combined_text
+        if dialog_summary:
+            user_content = f"Краткая сводка диалога: {dialog_summary}\n\nТекущее сообщение клиента:\n{combined_text}"
+
         try:
             response = await self._client.chat.completions.create(
                 model=settings.GUARDRAIL_MODEL,
@@ -90,7 +117,7 @@ class GuardrailService:
                 response_format={"type": "json_object"},
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": combined_text},
+                    {"role": "user", "content": user_content},
                 ],
             )
             raw_content = _strip_markdown_fence(response.choices[0].message.content)
