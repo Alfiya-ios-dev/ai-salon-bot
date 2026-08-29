@@ -241,7 +241,25 @@ class RagDocument(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(255))
+    # Original uploaded filename, when this row came from POST
+    # /api/v1/documents/upload (app/api/documents.py). Null for any
+    # RagDocument created another way (e.g. seeded directly as freeform text).
+    filename: Mapped[str | None] = mapped_column(String(255))
     content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class StopCategory(Base):
+    """Admin-editable list of reasons the guardrail should stop and hand a
+    dialog to a human. CRUD-only for now (see app/api/stop_categories.py) —
+    not yet consumed by guardrail_service's classification prompt, which
+    still uses its own fixed STOP_BOT_CATEGORIES list."""
+
+    __tablename__ = "stop_categories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True)
+    is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

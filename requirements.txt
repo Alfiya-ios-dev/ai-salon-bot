@@ -12,3 +12,4 @@ google-genai
 pyjwt
 passlib[bcrypt]
 bcrypt<4.0
+python-multipart

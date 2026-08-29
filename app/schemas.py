@@ -185,3 +185,35 @@ class AvailableSlotsResponse(BaseModel):
     date: date
     staff_id: int | None
     available_slots: list[str]
+
+
+class DocumentResponse(BaseModel):
+    id: int
+    filename: str
+    created_at: datetime
+
+
+class StopCategoryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    is_active: bool = True
+
+
+class StopCategoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    is_active: bool
+
+
+class ManagerCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    phone: str | None = None
+    is_senior: bool = False
+
+
+class ManagerResponse(BaseModel):
+    id: int
+    name: str
+    phone: str | None
+    is_senior: bool
