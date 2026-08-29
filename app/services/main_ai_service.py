@@ -14,6 +14,7 @@ from app.services import booking_service
 from app.services.dialog_summary_service import get_latest_summary_text
 from app.services.knowledge_service import get_relevant_knowledge_context
 from app.services.sales_prompt_service import get_or_create_sales_prompt
+from app.services.tenant_settings_service import get_tenant_settings, is_default_tenant_settings
 
 # Everything below is fixed, non-DB-editable operational scaffolding: tool
 # usage rules and anti-hallucination guards that the AI's function-calling
@@ -100,6 +101,16 @@ FIRST_MESSAGE_INSTRUCTION = (
 )
 
 FALLBACK_REPLY = "К сожалению, сервис временно недоступен. Наш менеджер скоро свяжется с вами!"
+
+
+def _terminology_instruction(tenant_settings) -> str:
+    return (
+        f"\n\nТЕРМИНОЛОГИЯ ЭТОГО БИЗНЕСА (сфера: {tenant_settings.industry_type}): специалиста, который "
+        f"выполняет услугу, называй '{tenant_settings.staff_label_singular}' (во множественном числе — "
+        f"'{tenant_settings.staff_label_plural}'), а позицию из прайс-листа — "
+        f"'{tenant_settings.service_label}'. Используй именно эти слова вместо общих 'мастер'/'услуга' "
+        f"во всех репликах клиенту."
+    )
 
 MAX_TOOL_ROUNDS = 5
 
@@ -517,6 +528,7 @@ class MainAIService:
         today = date.today()
         knowledge_context = await get_relevant_knowledge_context(db, combined_text)
         summary_text = await get_latest_summary_text(db, dialog_id)
+        tenant_settings = await get_tenant_settings(db)
         sales_prompt = await get_or_create_sales_prompt(db)
         history = await self._load_history(db, dialog_id)
         if not history:
@@ -527,6 +539,11 @@ class MainAIService:
         system_prompt = f"{sales_prompt.system_prompt}\n\n{TOOL_INSTRUCTIONS}"
         if summary_text:
             system_prompt += f"\n\nКРАТКАЯ СВОДКА ПРЕДЫДУЩЕГО ДИАЛОГА:\n{summary_text}"
+        # Skipped entirely for the (common) default beauty-salon case — the
+        # rest of the prompt already speaks that language, so there's
+        # nothing worth spending extra tokens restating.
+        if not is_default_tenant_settings(tenant_settings):
+            system_prompt += _terminology_instruction(tenant_settings)
         if sales_prompt.upsell_scripts.strip():
             system_prompt += (
                 f"\n\nСКРИПТЫ ДОПРОДАЖ (используй уместно и ненавязчиво, "

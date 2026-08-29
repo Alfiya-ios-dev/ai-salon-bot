@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.services.gemini_client import get_gemini_client
 from app.services.knowledge_service import get_relevant_knowledge_context
+from app.services.tenant_settings_service import get_tenant_settings, is_default_tenant_settings
 
 BASE_SYSTEM_PROMPT = (
     "Сен сулуулук салонунун жардамчысысың, кыргыз тилинде жооп бересиң. "
@@ -28,6 +29,21 @@ FALLBACK_RESULT_TEXT = "Кечиресиз, учурда техникалык к
 GEMINI_MAX_OUTPUT_TOKENS = 400
 
 
+def _terminology_instruction(tenant_settings) -> str:
+    # Instruction is in Russian (like the rest of this file's non-prompt
+    # code) even though BASE_SYSTEM_PROMPT is Kyrgyz — the model itself is
+    # multilingual and follows Russian meta-instructions about a Kyrgyz
+    # reply just fine; only skipped entirely for the default beauty-salon
+    # case, same as main_ai_service.py.
+    return (
+        f"\n\nТЕРМИНОЛОГИЯ ЭТОГО БИЗНЕСА (сфера: {tenant_settings.industry_type}): специалиста, который "
+        f"выполняет услугу, называй '{tenant_settings.staff_label_singular}' (во множественном числе — "
+        f"'{tenant_settings.staff_label_plural}'), а позицию из прайс-листа — "
+        f"'{tenant_settings.service_label}'. Используй именно эти слова вместо общих обозначений во всех "
+        f"репликах клиенту, переведя их на кыргызский естественным образом."
+    )
+
+
 class GeminiResult(BaseModel):
     text: str
     is_stop_bot: bool = False
@@ -43,7 +59,11 @@ class GeminiService:
         print(f"[GEMINI] Calling model={settings.GEMINI_MODEL}...", flush=True)
         client = get_gemini_client()
         knowledge_context = await get_relevant_knowledge_context(db, combined_text)
-        system_prompt = BASE_SYSTEM_PROMPT + knowledge_context
+        tenant_settings = await get_tenant_settings(db)
+        system_prompt = BASE_SYSTEM_PROMPT
+        if not is_default_tenant_settings(tenant_settings):
+            system_prompt += _terminology_instruction(tenant_settings)
+        system_prompt += knowledge_context
         try:
             response = await client.aio.models.generate_content(
                 model=settings.GEMINI_MODEL,

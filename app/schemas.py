@@ -164,6 +164,25 @@ class BusinessInfoResponse(BaseModel):
     value: str
 
 
+class TenantSettingsUpdate(BaseModel):
+    """Bulk update for the tenant-profile settings that let the bot fit
+    non-beauty businesses (autoservice, clinics, photo studios, ...). All
+    fields optional so a partial update (e.g. just industry_type) doesn't
+    require resending the rest."""
+
+    industry_type: str | None = None
+    staff_label_singular: str | None = None
+    staff_label_plural: str | None = None
+    service_label: str | None = None
+
+
+class TenantSettingsResponse(BaseModel):
+    industry_type: str
+    staff_label_singular: str
+    staff_label_plural: str
+    service_label: str
+
+
 class SalesPromptUpdate(BaseModel):
     system_prompt: str = Field(min_length=1)
     upsell_scripts: str = ""
