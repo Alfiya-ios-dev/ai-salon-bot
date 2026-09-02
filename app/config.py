@@ -7,10 +7,24 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://salon_user:salon_pass@localhost:5432/tenant_registry_db"
     DEBOUNCE_DELAY_SECONDS: float = 3.0
 
-    OPENROUTER_API_KEY: str = ""
-    GUARDRAIL_MODEL: str = "anthropic/claude-haiku-4.5"
-    MAIN_AI_MODEL: str = "anthropic/claude-sonnet-5"
+    # Provider for MainAIService (function-calling reply model) and
+    # GuardrailService (fast classifier) — "openai" or "gemini". Both are
+    # called through the same AsyncOpenAI client shape: OpenAI natively,
+    # Gemini via its OpenAI-compatible endpoint (see app/services/ai_client.py).
+    # Replaces the former OpenRouter-based client, dropped after repeated
+    # Cloudflare 403s from OpenRouter's edge.
+    AI_PROVIDER: str = "openai"
+    AI_MODEL: str = "gpt-4o-mini"
+    OPENAI_API_KEY: str = ""
 
+    # Cheap/fast classifier model for GuardrailService — deliberately
+    # separate from AI_MODEL so it can stay on a smaller model than the main
+    # reply generator regardless of which AI_PROVIDER is active.
+    GUARDRAIL_MODEL: str = "gpt-4o-mini"
+
+    # Unrelated to AI_PROVIDER above: GeminiService (app/services/gemini_service.py)
+    # is a separate, Kyrgyz-language reply path that always talks to Gemini
+    # directly via the native google-genai SDK, not the OpenAI-compat client.
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.6-flash"
 
@@ -19,6 +33,12 @@ class Settings(BaseSettings):
     # Tenant.telegram_bot_token (app/registry_models.py), not this setting,
     # since different tenants can link different bot tokens.
     TELEGRAM_BOT_TOKEN: str = ""
+
+    # Where pilot-limit warnings (see app/services/pilot_limit_service.py)
+    # get sent for dalfy's own team, in addition to the log line that always
+    # fires. Uses TELEGRAM_BOT_TOKEN above. Left empty by default — no
+    # dalfy-admin Telegram chat is configured yet, so only the log fires.
+    DALFY_ADMIN_TELEGRAM_CHAT_ID: str = ""
 
     JWT_SECRET_KEY: str = "dev-only-insecure-secret-change-me-in-production"
     JWT_ALGORITHM: str = "HS256"

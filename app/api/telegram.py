@@ -69,6 +69,7 @@ async def receive_telegram_update(bot_token: str, request: Request) -> dict:
     timestamp = datetime.fromtimestamp(message["date"], tz=timezone.utc)
 
     await ingest_client_message(
+        tenant_id=tenant.id,
         database_name=tenant.database_name,
         client_external_id=client_external_id,
         channel="telegram",

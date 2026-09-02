@@ -1,10 +1,10 @@
 from typing import Literal
 
 import openai
-from openai import AsyncOpenAI
 from pydantic import BaseModel, ValidationError
 
 from app.config import settings
+from app.services.ai_client import build_ai_client
 
 # Explicit, compact category list for is_stop_bot — passed into the prompt
 # as a short bullet list instead of a longer free-text explanation, and
@@ -78,8 +78,9 @@ _FALLBACK_RESULT = GuardrailResult(
 
 
 def _strip_markdown_fence(text: str) -> str:
-    # Claude via OpenRouter often wraps JSON in a ```json ... ``` fence even
-    # when instructed not to and with response_format=json_object set.
+    # Some models wrap JSON in a ```json ... ``` fence even when instructed
+    # not to and with response_format=json_object set — kept as a defensive
+    # strip regardless of which AI_PROVIDER/model is active.
     text = text.strip()
     if text.startswith("```"):
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
@@ -90,10 +91,7 @@ class GuardrailService:
     """Cheap/fast classifier that runs before any reply-generating model."""
 
     def __init__(self) -> None:
-        self._client = AsyncOpenAI(
-            api_key=settings.OPENROUTER_API_KEY or None,
-            base_url="https://openrouter.ai/api/v1",
-        )
+        self._client = build_ai_client()
 
     async def check(
         self, combined_text: str, current_language: str = "ru", dialog_summary: str = ""

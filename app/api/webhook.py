@@ -53,6 +53,7 @@ async def receive_webhook(payload: WebhookRequest, registry_db: AsyncSession = D
         )
 
     await ingest_client_message(
+        tenant_id=tenant.id,
         database_name=tenant.database_name,
         client_external_id=payload.client_external_id,
         channel=payload.channel,

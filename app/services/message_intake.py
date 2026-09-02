@@ -6,8 +6,10 @@ from typing import Awaitable, Callable
 from sqlalchemy import select
 
 from app.config import settings
+from app.database import AsyncSessionLocal
 from app.models import Dialog, DialogStatus, Message, SenderType
 from app.services import pipeline
+from app.services.pilot_limit_service import PILOT_LIMIT_REASON, register_client_and_check_limit
 from app.tenant_db import get_tenant_sessionmaker
 
 # Called with the bot's reply text once the debounce timer fires and the
@@ -125,6 +127,7 @@ def schedule_debounced_reply(
 
 async def save_client_message(
     *,
+    tenant_id: int,
     database_name: str,
     client_external_id: str,
     channel: str,
@@ -149,11 +152,22 @@ async def save_client_message(
             dialog = result.scalar_one_or_none()
 
             if dialog is None:
+                # A brand-new client for this tenant — check (and count
+                # against) the pilot-period dialog cap in the registry DB
+                # before creating the dialog, so a client arriving after the
+                # cap is reached starts out already handed to a human
+                # instead of getting even one bot reply.
+                async with AsyncSessionLocal() as registry_db:
+                    limit_status = await register_client_and_check_limit(
+                        registry_db, tenant_id, client_external_id
+                    )
+
                 dialog = Dialog(
                     client_external_id=client_external_id,
                     channel=channel,
                     language="ru",
-                    status=DialogStatus.bot_active,
+                    status=DialogStatus.escalated if limit_status.limit_reached else DialogStatus.bot_active,
+                    escalation_reason=PILOT_LIMIT_REASON if limit_status.limit_reached else None,
                 )
                 db.add(dialog)
                 await db.flush()
@@ -176,6 +190,7 @@ async def save_client_message(
 
 async def ingest_client_message(
     *,
+    tenant_id: int,
     database_name: str,
     client_external_id: str,
     channel: str,
@@ -192,6 +207,7 @@ async def ingest_client_message(
     immediately instead of blocking for DEBOUNCE_DELAY_SECONDS.
     """
     dialog_id = await save_client_message(
+        tenant_id=tenant_id,
         database_name=database_name,
         client_external_id=client_external_id,
         channel=channel,

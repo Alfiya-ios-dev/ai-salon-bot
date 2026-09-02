@@ -28,6 +28,12 @@ class TelegramBotTokenUpdate(BaseModel):
     telegram_bot_token: str = Field(min_length=10)
 
 
+class PilotStatusResponse(BaseModel):
+    used_dialogs_count: int
+    max_dialogs_limit: int
+    is_pilot_active: bool
+
+
 class IncomingMessage(BaseModel):
     text: str
     timestamp: datetime

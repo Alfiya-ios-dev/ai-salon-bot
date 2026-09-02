@@ -13,6 +13,7 @@ from app.api.slots import router as slots_router
 from app.api.staff import router as staff_router
 from app.api.stop_categories import router as stop_categories_router
 from app.api.telegram import router as telegram_router
+from app.api.tenant_status import router as tenant_status_router
 from app.api.webhook import router as webhook_router
 from app.config import settings
 from app.database import Base, engine
@@ -50,3 +51,4 @@ app.include_router(documents_router, prefix="/api/v1/documents", tags=["Document
 app.include_router(stop_categories_router, prefix="/api/v1/stop-categories", tags=["StopCategories"])
 app.include_router(managers_router, prefix="/api/v1/managers", tags=["Managers"])
 app.include_router(telegram_router, prefix="/api/v1/telegram/webhook", tags=["Telegram"])
+app.include_router(tenant_status_router, prefix="/api/v1/tenant", tags=["Tenant"])

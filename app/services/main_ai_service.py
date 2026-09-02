@@ -4,13 +4,13 @@ import re
 from datetime import date, datetime, timezone
 
 import openai
-from openai import AsyncOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Message, SenderType, Staff
 from app.services import booking_service
+from app.services.ai_client import build_ai_client
 from app.services.dialog_summary_service import get_latest_summary_text
 from app.services.knowledge_service import get_relevant_knowledge_context
 from app.services.sales_prompt_service import get_or_create_sales_prompt
@@ -364,10 +364,7 @@ class MainAIService:
     function-calling access to the booking service."""
 
     def __init__(self) -> None:
-        self._client = AsyncOpenAI(
-            api_key=settings.OPENROUTER_API_KEY or None,
-            base_url="https://openrouter.ai/api/v1",
-        )
+        self._client = build_ai_client()
 
     async def _load_history(self, db: AsyncSession, dialog_id: int) -> list[dict]:
         """Loads this dialog's most recent messages as OpenAI-style chat
@@ -523,7 +520,7 @@ class MainAIService:
         return result
 
     async def generate_reply(self, db: AsyncSession, dialog_id: int, combined_text: str) -> str:
-        print(f"[MAIN_AI] Calling model={settings.MAIN_AI_MODEL}...", flush=True)
+        print(f"[MAIN_AI] Calling model={settings.AI_MODEL}...", flush=True)
 
         today = date.today()
         knowledge_context = await get_relevant_knowledge_context(db, combined_text)
@@ -563,7 +560,7 @@ class MainAIService:
         try:
             for _ in range(MAX_TOOL_ROUNDS):
                 response = await self._client.chat.completions.create(
-                    model=settings.MAIN_AI_MODEL,
+                    model=settings.AI_MODEL,
                     max_tokens=MAIN_AI_MAX_OUTPUT_TOKENS,
                     tools=TOOLS,
                     messages=messages,

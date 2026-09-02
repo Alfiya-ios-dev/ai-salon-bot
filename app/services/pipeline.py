@@ -5,11 +5,18 @@ from app.services.dialog_summary_service import get_latest_summary_text
 from app.services.gemini_service import gemini_service
 from app.services.guardrail_service import guardrail_service
 from app.services.main_ai_service import main_ai_service
+from app.services.pilot_limit_service import PILOT_LIMIT_REASON
 from app.text_utils import sanitize_text
 
 STOP_BOT_REPLY = (
     "Приносим извинения за доставленные неудобства! Я передал(а) ваше обращение "
     "управляющему, он свяжется с вами в ближайшее время для решения вопроса."
+)
+
+PILOT_LIMIT_REPLY = (
+    "Спасибо за обращение! На данный момент бот на пилотном тестировании и "
+    "достиг лимита диалогов — я передал(а) ваше сообщение владельцу бизнеса, "
+    "он свяжется с вами напрямую в ближайшее время."
 )
 
 HOT_LEAD_REPLY = (
@@ -37,6 +44,16 @@ async def handle_message(db: AsyncSession, dialog_id: int, combined_text: str) -
     combined_text = sanitize_text(combined_text)
 
     dialog = await db.get(Dialog, dialog_id)
+
+    # Pilot-period dialog cap already reached for this (brand-new) client at
+    # save_client_message() time (see message_intake.py /
+    # pilot_limit_service.py) — skip the guardrail and every reply model
+    # entirely, every single time this dialog is flushed, until a human
+    # manually resumes it (e.g. by changing its status).
+    if dialog.status == DialogStatus.escalated and dialog.escalation_reason == PILOT_LIMIT_REASON:
+        print(f"[PIPELINE] Dialog {dialog_id} over pilot limit — skipping AI entirely", flush=True)
+        print(f"[PIPELINE] Reply: {PILOT_LIMIT_REPLY}", flush=True)
+        return PILOT_LIMIT_REPLY
 
     # Passing the dialog's current language lets the guardrail keep it
     # ("sticky") for short/ambiguous messages (a lone name, phone number,
