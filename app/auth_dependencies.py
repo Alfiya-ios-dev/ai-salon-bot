@@ -31,3 +31,21 @@ async def get_current_tenant_db(
     sessionmaker = get_tenant_sessionmaker(database_name)
     async with sessionmaker() as session:
         yield session
+
+
+async def get_current_tenant_id(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
+) -> int:
+    """Like get_current_tenant_db, but for the few endpoints (e.g. linking a
+    Telegram bot token) that need to update the caller's own row in the
+    registry DB itself, rather than connect to its per-tenant database.
+    """
+    try:
+        payload = decode_access_token(credentials.credentials)
+    except PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    tenant_id = payload.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(status_code=401, detail="Malformed token")
+    return tenant_id

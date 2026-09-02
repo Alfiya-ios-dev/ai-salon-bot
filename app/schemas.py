@@ -24,6 +24,10 @@ class TokenResponse(BaseModel):
     business_name: str
 
 
+class TelegramBotTokenUpdate(BaseModel):
+    telegram_bot_token: str = Field(min_length=10)
+
+
 class IncomingMessage(BaseModel):
     text: str
     timestamp: datetime

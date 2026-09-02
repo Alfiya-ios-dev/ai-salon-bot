@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth_dependencies import get_current_tenant_id
 from app.database import get_db
 from app.registry_models import Tenant
-from app.schemas import LoginRequest, RegisterRequest, TokenResponse
+from app.schemas import LoginRequest, RegisterRequest, TelegramBotTokenUpdate, TokenResponse
 from app.services.auth_service import create_access_token, hash_password, verify_password
 from app.tenant_db import provision_tenant_database
 
@@ -58,3 +59,31 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
 
     token = create_access_token(tenant.id, tenant.database_name, tenant.email)
     return TokenResponse(access_token=token, tenant_id=tenant.id, business_name=tenant.business_name)
+
+
+@router.put("/telegram-bot-token")
+async def set_telegram_bot_token(
+    payload: TelegramBotTokenUpdate,
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Links this tenant's Telegram bot to their account — app/api/telegram.py
+    looks up the tenant by this same token when a webhook update arrives.
+    """
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    existing = await db.scalar(
+        select(Tenant).where(
+            Tenant.telegram_bot_token == payload.telegram_bot_token, Tenant.id != tenant_id
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409, detail="This Telegram bot token is already linked to another business"
+        )
+
+    tenant.telegram_bot_token = payload.telegram_bot_token
+    await db.commit()
+    return {"status": "ok", "telegram_bot_token": tenant.telegram_bot_token}

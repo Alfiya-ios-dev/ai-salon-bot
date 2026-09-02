@@ -21,5 +21,11 @@ class Tenant(Base):
     # The WhatsApp number clients message this business on — webhook.py uses
     # this to figure out which tenant an incoming message belongs to.
     business_phone_number: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    # Optional Telegram bot token linked via PUT /api/v1/auth/telegram-bot-token.
+    # Telegram delivers webhook updates with no bot-identifying field in the
+    # payload itself, so the token is embedded in the webhook URL path
+    # (see app/api/telegram.py) and looked up here the same way
+    # business_phone_number routes the WhatsApp webhook.
+    telegram_bot_token: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
     database_name: Mapped[str] = mapped_column(String(100), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

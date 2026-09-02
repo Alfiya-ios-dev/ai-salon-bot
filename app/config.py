@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.6-flash"
 
+    # Used only by scripts/tooling for convenience (e.g. printing the
+    # setWebhook command) — actual webhook routing is DB-driven via
+    # Tenant.telegram_bot_token (app/registry_models.py), not this setting,
+    # since different tenants can link different bot tokens.
+    TELEGRAM_BOT_TOKEN: str = ""
+
     JWT_SECRET_KEY: str = "dev-only-insecure-secret-change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
