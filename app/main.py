@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -17,6 +18,7 @@ from app.api.tenant_status import router as tenant_status_router
 from app.api.webhook import router as webhook_router
 from app.config import settings
 from app.database import Base, engine
+from app.services.telegram_poller import run_telegram_polling_loop
 from app import registry_models  # noqa: F401  (registers Tenant on Base.metadata)
 
 
@@ -28,7 +30,16 @@ async def lifespan(app: FastAPI):
     # app.tenant_db.provision_tenant_database().
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    yield
+
+    # Fallback delivery path for Telegram while no HTTPS/domain is set up
+    # for a real webhook (see app/services/telegram_poller.py) — safe to
+    # leave running even once a webhook exists later, since it's a no-op
+    # for any tenant with zero pending updates.
+    poller_task = asyncio.create_task(run_telegram_polling_loop())
+    try:
+        yield
+    finally:
+        poller_task.cancel()
 
 
 app = FastAPI(title="Beauty Salon Bot Backend", lifespan=lifespan)

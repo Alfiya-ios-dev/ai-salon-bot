@@ -29,6 +29,41 @@ async def _send_telegram_message(bot_token: str, chat_id: int, text: str) -> Non
         print(f"[TELEGRAM] Failed to send message to chat {chat_id}: {exc}", flush=True)
 
 
+async def process_telegram_message(tenant: Tenant, message: dict) -> None:
+    """Handles one Telegram message for an already-resolved tenant — shared
+    by the webhook route below and app/services/telegram_poller.py (the
+    getUpdates long-polling fallback used while no HTTPS/domain is set up
+    for a real webhook).
+    """
+    bot_token = tenant.telegram_bot_token
+    chat_id = message["chat"]["id"]
+    client_external_id = str(chat_id)
+    message_id = str(message["message_id"])
+
+    # Media guardrail: anything without a "text" field (voice/photo/video/
+    # document/sticker/...) gets an immediate canned reply — no dialog/
+    # message row, no AI call. Sent directly via the Bot API since, unlike
+    # the WhatsApp webhook, there's no other channel delivering the ack
+    # back to the client.
+    text = message.get("text")
+    if text is None:
+        await _send_telegram_message(bot_token, chat_id, UNSUPPORTED_MEDIA_REPLY)
+        return
+
+    timestamp = datetime.fromtimestamp(message["date"], tz=timezone.utc)
+
+    await ingest_client_message(
+        tenant_id=tenant.id,
+        database_name=tenant.database_name,
+        client_external_id=client_external_id,
+        channel="telegram",
+        message_id=message_id,
+        text=text,
+        timestamp=timestamp,
+        on_reply=lambda reply_text: _send_telegram_message(bot_token, chat_id, reply_text),
+    )
+
+
 @router.post("/{bot_token}")
 async def receive_telegram_update(bot_token: str, request: Request) -> dict:
     """Telegram delivers webhook updates to whatever URL setWebhook was
@@ -52,30 +87,5 @@ async def receive_telegram_update(bot_token: str, request: Request) -> dict:
     if tenant is None:
         raise HTTPException(status_code=404, detail="No business linked to this Telegram bot token")
 
-    chat_id = message["chat"]["id"]
-    client_external_id = str(chat_id)
-    message_id = str(message["message_id"])
-
-    # Media guardrail: anything without a "text" field (voice/photo/video/
-    # document/sticker/...) gets an immediate canned reply — no dialog/
-    # message row, no AI call. Sent directly via the Bot API since, unlike
-    # the WhatsApp webhook, there's no other channel delivering the ack
-    # back to the client.
-    text = message.get("text")
-    if text is None:
-        await _send_telegram_message(bot_token, chat_id, UNSUPPORTED_MEDIA_REPLY)
-        return {"ok": True}
-
-    timestamp = datetime.fromtimestamp(message["date"], tz=timezone.utc)
-
-    await ingest_client_message(
-        tenant_id=tenant.id,
-        database_name=tenant.database_name,
-        client_external_id=client_external_id,
-        channel="telegram",
-        message_id=message_id,
-        text=text,
-        timestamp=timestamp,
-        on_reply=lambda reply_text: _send_telegram_message(bot_token, chat_id, reply_text),
-    )
+    await process_telegram_message(tenant, message)
     return {"ok": True}
