@@ -45,7 +45,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Beauty Salon Bot Backend", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # Was allow_origins=["*"] ("Allow all CORS origins for dev") — settings.
+    # CORS_ORIGINS/cors_origins_list already existed for exactly this but was
+    # never actually wired in here. Wildcard + allow_credentials=True is also
+    # unsafe: browsers reject credentialed cross-origin requests against a
+    # literal "*", so Starlette silently reflects the caller's own Origin
+    # back instead — meaning any site's browser JS could already call this
+    # API with the user's cookies/Authorization header. Switching to the
+    # explicit list before the real admin.dalfy.net deploy.
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

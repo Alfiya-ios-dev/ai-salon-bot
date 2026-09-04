@@ -1,0 +1,10 @@
+# .dockerignore is NOT the same as .gitignore — `COPY . .` in the Dockerfile
+# ignores .gitignore entirely, so without this file .env (real secrets) and
+# venv/ would get baked straight into the image layers.
+.env
+venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.idea/

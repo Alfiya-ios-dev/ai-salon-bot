@@ -4,13 +4,40 @@ services:
     container_name: salon_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: salon_db
+      # Must match app/config.py's DATABASE_URL default (and .env.example) —
+      # was "salon_db" here, which the app never actually connects to; fixed
+      # to the name every other part of the codebase (app/database.py,
+      # app/tenant_db.py, .env.example) already assumes.
+      POSTGRES_DB: tenant_registry_db
       POSTGRES_USER: salon_user
       POSTGRES_PASSWORD: salon_pass
     ports:
       - "5432:5432"
     volumes:
       - salon_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U salon_user -d tenant_registry_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: salon_app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Inside compose the app reaches Postgres by service name, not
+      # localhost — overrides whatever .env has (which defaults to
+      # localhost for a bare-metal/local-dev run outside Docker). Must stay
+      # in sync with the postgres service's credentials/db name above.
+      DATABASE_URL: postgresql+asyncpg://salon_user:salon_pass@postgres:5432/tenant_registry_db
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   salon_pg_data:
